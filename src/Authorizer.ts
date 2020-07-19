@@ -37,7 +37,7 @@ export class Authorizer {
             }
         } else if (mode == 'cookies') {
             this.mode = mode;
-            let permission = Cookies.get(args.cookieKey ? args.cookieKey : "casbin_perm");
+            const permission = Cookies.get(args.cookieKey ? args.cookieKey : "casbin_perm");
             if (permission) {
                 this.setPermission(permission);
             } else {
