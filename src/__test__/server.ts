@@ -9,19 +9,30 @@ class CasbinService {
     public async run() {
         // RBAC API doesn't support RBAC w/ domain.
         // this.enforcer = await newEnforcer('./src/__test__/example/rbac_with_domains_model.conf', './src/__test__/example/rbac_with_domains_policy.csv');
-        this.enforcer = await newEnforcer('./src/__test__/example/rbac_model.conf', './src/__test__/example/rbac_policy.csv');
+        this.enforcer = await newEnforcer('./src/__test__/examples/basic_model.conf', './src/__test__/examples/basic_policy.csv');
     }
     
-    public async getPermission(sub: string) : Promise<StringKV> {
-        const policies = await this.enforcer.getImplicitPermissionsForUser(sub);
-        const permission : StringKV = {};
-        policies.forEach(policy => {
-            if (!(policy[2] in permission)) {
-                permission[policy[2]] = [];
-            }
-            permission[policy[2]].push(policy[1]);
-        })
-        return permission;
+    public async getEnforcerConfig(sub: string): Promise<string> {
+
+        const obj: any = {};
+
+        const m = this.enforcer.getModel().model;
+        let s: string = "";
+        s += "[request_definition]\n";
+        s += `r = ${m.get('r')?.get('r')?.value.replace(/_/g, ".")}\n`;
+        s += "[policy_definition]\n";
+        s += `p = ${m.get('p')?.get('p')?.value.replace(/_/g, ".")}\n`;
+        s += "[policy_effect]\n"
+        s += `p = ${m.get('e')?.get('e')?.value.replace(/_/g, ".")}\n`;
+        s += "[matchers]\n";
+        s += `p = ${m.get('m')?.get('m')?.value.replace(/_/g, ".")}`;
+        obj['m'] = s;
+        obj['p'] = await this.enforcer.getPolicy();
+        for (let arr of obj['p']) {
+            arr.splice(0, 0, 'p');
+        }
+        
+        return JSON.stringify(obj);
     }
 }
 
@@ -48,10 +59,10 @@ class TestServer {
         });
         this.app.get('/api/casbin', async (req: express.Request, res: express.Response) => {
             const sub = String(req.query["casbin_subject"]);
-            const policies = await this.casbinServ.getPermission(sub);
+            const config = await this.casbinServ.getEnforcerConfig(sub);
             res.status(200).json({
                 message: 'ok',
-                data: policies
+                data: config
             })
         })
     }

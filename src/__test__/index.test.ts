@@ -1,6 +1,10 @@
 import axios from 'axios';
 import Cookies from 'js-cookie'
 import { Authorizer } from '../index';
+import { basicModelStr } from './models';
+import { basicPolicies } from './policies';
+import { removeLocalStorage } from '../Cache';
+import TestServer  from './server';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -8,8 +12,8 @@ const mockedAxios = axios as jest.Mocked<typeof axios>;
 
 test('Mock functions', async () => {
     const respObj = {
-        read: ['data1', 'data2'],
-        write: ['data2']
+        m: basicModelStr,
+        p: basicPolicies
     }
     const resp = { data: { message: 'ok', data: JSON.stringify(respObj)}};
     // Specify the returned data of the mockedAxios once
@@ -22,28 +26,28 @@ test('Mock functions', async () => {
     // expect(mockedAxios.get('http://localhost:4000/api/casbin?casbin_subject=alice')).toMatchObject(respObj);
 });
 
-const permissionObj = {
-    read: ['data1', 'data2', 'data3'],
-    write: ['data1']
+async function check(authorizer: Authorizer) {
+    // can
+    expect(await authorizer.can('read', 'data1')).toBe(true);
+    expect(await authorizer.can('read', 'data4')).toBe(false);
+    expect(await authorizer.can('write', 'data1')).toBe(false);
+    // cannot
+    expect(await authorizer.cannot('read', 'data4')).toBe(true);
+    expect(await authorizer.cannot('read', 'data1')).toBe(false);
+    // canAll
+    expect(await authorizer.canAll('read', ['data1', 'data2'])).toBe(true);
+    expect(await authorizer.canAll('write', ['data1', 'data2'])).toBe(false);
+    expect(await authorizer.canAll('read', ['data1', 'data2', 'data4'])).toBe(false);
+    // canAny
+    expect(await authorizer.canAny('read', ['data1', 'data2'])).toBe(true);
+    expect(await authorizer.canAny('write', ['data1', 'data2'])).toBe(true);
+    expect(await authorizer.canAny('read', ['data1', 'data2', 'data4'])).toBe(true);
+    expect(await authorizer.canAny('read', ['data4'])).toBe(false);
 }
 
-function check(authorizer: Authorizer) {
-    // can
-    expect(authorizer.can('read', 'data1')).toBe(true);
-    expect(authorizer.can('read', 'data4')).toBe(false);
-    expect(authorizer.can('write', 'data1')).toBe(true);
-    // cannot
-    expect(authorizer.cannot('read', 'data4')).toBe(true);
-    expect(authorizer.cannot('read', 'data3')).toBe(false);
-    // canAll
-    expect(authorizer.canAll('read', ['data1', 'data2'])).toBe(true);
-    expect(authorizer.canAll('write', ['data1', 'data2'])).toBe(false);
-    expect(authorizer.canAll('read', ['data1', 'data2', 'data4'])).toBe(false);
-    // canAny
-    expect(authorizer.canAny('read', ['data1', 'data2'])).toBe(true);
-    expect(authorizer.canAny('write', ['data1', 'data2'])).toBe(true);
-    expect(authorizer.canAny('read', ['data1', 'data2', 'data4'])).toBe(true);
-    expect(authorizer.canAny('read', ['data4'])).toBe(false);
+const permissionObj = {
+    read: ['data1', 'data2'],
+    write: ['data2']
 }
 
 // test('Cookies mode', () => {
@@ -57,36 +61,38 @@ function check(authorizer: Authorizer) {
 //     check(authorizer);
 // })
 
-// test('Manual mode', () => {
-//     const authorizer = new Authorizer('manual');
-//     authorizer.setPermission(permissionObj);
-//     check(authorizer);
-// })
-
-
-test('Manual mode', async () => {
+test('Manual mode', () => {
     const authorizer = new Authorizer('manual');
-    
-    const s: string = `[request_definition]
-r = sub, obj, act
-
-[policy_definition]
-p = sub, obj, act
-
-[policy_effect]
-e = some(where (p.eft == allow))
-
-[matchers]
-m = r.sub == p.sub && r.obj == p.obj && r.act == p.act`
-    const respData = JSON.stringify({
-        m: s,
-        p: [
-            ["p", "alice", "data1", "read"],
-            ["p", "bob", "data1", "write"]
-        ]
-    });
-    
-    await authorizer.initEnforcer(respData);
-    authorizer.setUser("alice")
-    expect(await authorizer.can("read", "data1")).toBe(true);
+    authorizer.setPermission(permissionObj);
+    check(authorizer);
 })
+
+
+test('Auto mode', async () => {
+    const respData = JSON.stringify({
+        m: basicModelStr,
+        p: basicPolicies,
+    });
+    const authorizer = new Authorizer("auto", {endpoint: "whatever"});
+    removeLocalStorage('alice');
+    await authorizer.initEnforcer(respData);
+    authorizer.user = "alice";
+    await check(authorizer);
+})
+
+describe('Auto mode with server', () => {
+    let server: TestServer;
+    beforeAll(async () => {
+        server = new TestServer();
+        await server.start();
+    });
+
+    test('Request for /api/casbin', async () => {
+        removeLocalStorage('alice');
+        const authorizer = new Authorizer('auto', { endpoint: 'http://localhost:4000/api/casbin'});
+        await authorizer.setUser('alice');
+        await check(authorizer);
+    });
+
+    afterAll(() => server.terminate());
+});
