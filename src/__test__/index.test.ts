@@ -46,19 +46,47 @@ function check(authorizer: Authorizer) {
     expect(authorizer.canAny('read', ['data4'])).toBe(false);
 }
 
-test('Cookies mode', () => {
-    const permissionObj = {
-        read: ['data1', 'data2', 'data3'],
-        write: ['data1']
-    }
-    const cookieKey = 'test_perm'
-    Cookies.set('test_perm', JSON.stringify(permissionObj));
-    const authorizer = new Authorizer('cookies', {cookieKey: cookieKey});
-    check(authorizer);
-})
+// test('Cookies mode', () => {
+//     const permissionObj = {
+//         read: ['data1', 'data2', 'data3'],
+//         write: ['data1']
+//     }
+//     const cookieKey = 'test_perm'
+//     Cookies.set('test_perm', JSON.stringify(permissionObj));
+//     const authorizer = new Authorizer('cookies', {cookieKey: cookieKey});
+//     check(authorizer);
+// })
 
-test('Manual mode', () => {
+// test('Manual mode', () => {
+//     const authorizer = new Authorizer('manual');
+//     authorizer.setPermission(permissionObj);
+//     check(authorizer);
+// })
+
+
+test('Manual mode', async () => {
     const authorizer = new Authorizer('manual');
-    authorizer.setPermission(permissionObj);
-    check(authorizer);
+    
+    const s: string = `[request_definition]
+r = sub, obj, act
+
+[policy_definition]
+p = sub, obj, act
+
+[policy_effect]
+e = some(where (p.eft == allow))
+
+[matchers]
+m = r.sub == p.sub && r.obj == p.obj && r.act == p.act`
+    const respData = JSON.stringify({
+        m: s,
+        p: [
+            ["p", "alice", "data1", "read"],
+            ["p", "bob", "data1", "write"]
+        ]
+    });
+    
+    await authorizer.initEnforcer(respData);
+    authorizer.setUser("alice")
+    expect(await authorizer.can("read", "data1")).toBe(true);
 })

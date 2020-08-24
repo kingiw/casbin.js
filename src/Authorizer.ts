@@ -1,8 +1,10 @@
 import axios from 'axios';
 import Cookies from 'js-cookie';
+import * as casbin from 'casbin';
 import Permission from './Permission';
+// import Enforcer from './Enforcer'
 import { StringKV } from './types';
-import * as Cache from './Cache'
+import * as Cache from './Cache';
 
 interface BaseResponse {
     message: string;
@@ -18,6 +20,8 @@ export class Authorizer {
     private permission = new Permission();
     private cookieKey : string | undefined = undefined;
     private cacheExpiredTime  = 60; // Seconds
+    // private enforcer :Enforcer;
+    private enforcer:casbin.Enforcer | undefined;
 
     /**
      * 
@@ -65,13 +69,30 @@ export class Authorizer {
     public setPermission(permission : Record<string, unknown> | string) : void{
         this.permission.load(permission);
     }
+    
+    
+    public async initEnforcer(s: string): Promise<void> {
+        const obj = JSON.parse(s);
+        if (!('m' in obj)) {
+            throw Error("No model when initEnforcer.")
+        }
+        const m = casbin.newModelFromString(obj['m']);
+        this.enforcer = await casbin.newEnforcer(m);
+        if ('p' in obj) {
+            for (let sArray of obj['p']) {
+                this.enforcer.addPolicy(sArray[1], sArray[2], sArray[3]);
+            }
+        }
+        console.log(`kingiw ${await this.enforcer.enforce('alice', 'data1', 'read')}`)
+    }
 
     /**
      * Get the authority of a given user from Casbin core
      */
-    private async syncUserPermission(): Promise<void> {
+    public async syncUserPermission(): Promise<void> {
         if (this.endpoint !== undefined && this.endpoint !== null) {
             const resp = await axios.get<BaseResponse>(`${this.endpoint}?casbin_subject=${this.user}`);
+            
             this.permission.load(resp.data.data);
         }
     }
@@ -82,24 +103,29 @@ export class Authorizer {
      */
     public async setUser(user : string) : Promise<void> {
         // Sync with the server and fetch the latest permission of the new user
-        if (this.mode == 'auto' && user != this.user) {
-            this.user = user;
-            const permStr = Cache.loadFromLocalStorage(user);
-            if (permStr === null) {
-                await this.syncUserPermission();
-                Cache.saveToLocalStorage(user, this.permission.getPermissionString(), this.cacheExpiredTime);
-            } else {
-                this.permission.load(permStr);
-            }
-        }        
+        // if (this.mode == 'auto' && user != this.user) {
+        //     this.user = user;
+        //     const permStr = Cache.loadFromLocalStorage(user);
+        //     if (permStr === null) {
+        //         await this.syncUserPermission();
+        //         Cache.saveToLocalStorage(user, this.permission.getPermissionString(), this.cacheExpiredTime);
+        //     } else {
+        //         this.permission.load(permStr);
+        //     }
+        // }        
+        this.user = user;
     }
 
-    public can(action: string, object: string): boolean {
-        return this.permission.check(action, object);
+    public async can(action: string, object: string): Promise<boolean> {
+        if (this.enforcer === undefined) {
+            throw Error("Enforcer not initialized");
+        } else {
+            return this.enforcer.enforce(this.user, object, action);
+        }
     }
 
     public cannot(action: string, object: string): boolean {
-        return !this.permission.check(action, object);
+        return !this.can(action, object);
     }
 
     public canAll(action: string, objects: Array<string>) : boolean {
