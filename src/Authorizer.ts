@@ -1,8 +1,5 @@
 import axios from 'axios';
-import Cookies from 'js-cookie';
 import * as casbin from 'casbin';
-import Permission from './Permission';
-import { StringKV } from './types';
 import * as Cache from './Cache';
 
 interface BaseResponse {
@@ -10,144 +7,71 @@ interface BaseResponse {
     data: any;
 }
 
-type Mode = "auto" | "cookies" | "manual"
+export default class Authorizer {
+    private _endpoint!: string;
+    private _casbinModel!: casbin.Model;
+    private _casbinEnforcer!: casbin.Enforcer;
+    private _enforcerInit = false;
 
-export class Authorizer {
-    public mode!: Mode;
-    public endpoint: string | undefined = undefined;
-    public permission: Permission | undefined;
-    public cookieKey : string | undefined = undefined;
-    public cacheExpiredTime  = 60; // Seconds
-    public user : string | undefined;
-    public enforcer:casbin.Enforcer | undefined;
-
-    /**
-     *
-     * @param mode "auto", "cookies" or "manual"
-     * "auto": Specify the casbin server endpoint, and Casbin.js will load permission from it when the identity changes
-     * "cookies": Casbin.js load the permission data from the cookie "casbin_permission" or the specified cookie key.
-     * "manual": Load the permission mannually with "setPermission"
-     * @param args.endpoint Casbin service endpoint, REQUIRED when mode == "auto"
-     * @param args.cacheExpiredTime The expired time of local cache, Unit: seconds, Default: 60s, activated when mode == "auto"
-     * @param args.cookieKey The cookie key when loading permission, activated when mode == "cookies"
-     */
-    constructor(mode: Mode = "manual", args: {endpoint?: string, /*cookieKey?: string,*/ cacheExpiredTime?: number} = {}) {
-        if (mode == 'auto') {
-            if (!args.endpoint) {
-                throw new Error("Specify the endpoint when initializing casbin.js with mode == 'auto'");
-            } else {
-                this.mode = mode;
-                this.endpoint = args.endpoint;
-                if (args.cacheExpiredTime !== null && args.cacheExpiredTime !== undefined) {
-                    this.cacheExpiredTime = args.cacheExpiredTime;
-                }
-            }
-        } else if (mode == 'cookies') {
-            throw Error("Cookie mode not implemented.");
-            /*
-            this.mode = mode;
-            const permission = Cookies.get(args.cookieKey ? args.cookieKey : "casbin_perm");
-            if (permission) {
-                this.setPermission(permission);
-            } else {
-                console.log("WARNING: No specified cookies");
-            }
-            */
-        } else if (mode == 'manual') {
-            this.mode = mode;
-        } else {
-            throw new Error("Casbin.js mode can only be one of the 'auto', 'cookies' and 'manual'");
+    async setup(endpoint: string, user: string) {
+        this._endpoint = endpoint;
+        let profile = Cache.loadFromLocalStorage(user);
+        if (profile === '') {
+            profile = await this.fetchProfile(user);
+            Cache.saveToLocalStorage(user, profile, 3600);
         }
+        await this.initEnforcer(profile);
     }
 
-    /**
-     * Get the permission.
-     */
-    public getPermission() : StringKV {
-        if (this.permission !== undefined) {
-            return this.permission?.getPermissionJsonObject();
-        } else {
-            throw Error("Permission is not defined. Are you using manual mode and have set the permission?");
-            return {} as StringKV;
+    public async fetchProfile(user: string): Promise<string> {
+        if (this._endpoint === undefined || this._endpoint === null) {
+            throw Error('Endpoint not specified');
         }
+        const resp = await axios.get<BaseResponse>(`${this._endpoint}?casbin_subject=${user}`);
+        return resp.data.data; // profile
     }
 
-    public setPermission(permission : Record<string, unknown> | string) : void{
-        if (this.permission === undefined) {
-            this.permission = new Permission();
-        }
-        this.permission.load(permission);
-    }
-    
-    public async initEnforcer(s: string): Promise<void> {
-        const obj = JSON.parse(s);
-        if (!('m' in obj)) {
-            throw Error("No model when init enforcer.");
-        }
-        const m = casbin.newModelFromString(obj['m']);
-        this.enforcer = await casbin.newEnforcer(m);
-        if ('p' in obj) {
-            for (const sArray of obj['p']) {
-                await this.enforcer.addPolicy(sArray[1].trim(), sArray[2].trim(), sArray[3].trim());
-            }
-        }
-    }
+    public async initEnforcer(profile: string) {
+        const profileJson = JSON.parse(profile);
+        const requestDef: string = profileJson.r;
+        const policyDef: string = profileJson.p;
+        const policyEff: string = profileJson.e.split('_').join('.');
+        // not support for ABAC currently
+        const matchers: string = profileJson.m.split('_').join('.');
+        const policies: string[] = profileJson.ps.split('\n');
+        const modelConfStr = [
+            '[request_definition]',
+            `r = ${requestDef}`,
+            '[policy_definition]',
+            `p = ${policyDef}`,
+            '[policy_effect]',
+            `e = ${policyEff}`,
+            '[matchers]',
+            `${matchers}`,
+        ].join('\n');
+        this._casbinModel = casbin.newModelFromString(modelConfStr);
+        this._casbinEnforcer = await casbin.newEnforcer(this._casbinModel);
 
-    /**
-     * Initialize the enforcer
-     */
-    public async getEnforcerDataFromSvr(): Promise<string>{
-        if (this.endpoint === undefined || this.endpoint === null) {
-            throw Error("Endpoint is null or not specified.");
-        }
-        const resp = await axios.get<BaseResponse>(`${this.endpoint}?casbin_subject=${this.user}`);
-        return resp.data.data;
-    }
-
-    /**
-     * Set the user subject for the authroizer
-     * @param user The current user
-     */
-    public async setUser(user : string) : Promise<void> {
-        if (this.mode == 'auto' && user !== this.user) {
-            this.user = user;
-            let config = Cache.loadFromLocalStorage(user);
-            if (config === null) {
-                config = await this.getEnforcerDataFromSvr();
-                Cache.saveToLocalStorage(user, config, this.cacheExpiredTime);
-            }
-            await this.initEnforcer(config);
-        }
+        policies.forEach(async (policy) => {
+            await this._casbinEnforcer.addPolicy(...policy.split(',').slice(1, 4));
+        });
+        this._enforcerInit = true;
     }
 
     public async can(action: string, object: string): Promise<boolean> {
-        if (this.mode == "manual") {
-            return this.permission !== undefined && this.permission.check(action, object);
-        } else if (this.mode == "auto") {
-            if (this.enforcer === undefined) {
-                throw Error("Enforcer not initialized");
-            } else {
-                return await this.enforcer.enforce(this.user, object, action);
-            }
+        if (this._enforcerInit) {
+            return await this._casbinEnforcer.enforce('_', action, object);
         } else {
-            throw Error(`Mode ${this.mode} not recognized.`);
+            // Authorizer not init
+            return false;
         }
     }
 
     public async cannot(action: string, object: string): Promise<boolean> {
-        return !(await this.can(action, object));
+        return await this.can(action, object);
     }
 
-    public async canAll(action: string, objects: string[]) : Promise<boolean> {
-        for (let i = 0; i < objects.length; ++i) {
-            if (await this.cannot(action, objects[i])) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    public async canAny(action: string, objects: string[]) : Promise<boolean> {
+    public async canAny(action: string, objects: string[]): Promise<boolean> {
         for (let i = 0; i < objects.length; ++i) {
             if (await this.can(action, objects[i])) {
                 return true;
@@ -156,4 +80,12 @@ export class Authorizer {
         return false;
     }
 
+    public async canAll(action: string, objects: string[]): Promise<boolean> {
+        for (let i = 0; i < objects.length; ++i) {
+            if (await this.can(action, objects[i])) {
+                return true;
+            }
+        }
+        return false;
+    }
 }

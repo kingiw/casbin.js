@@ -1,3 +1,3 @@
 export interface StringKV {
-    [key: string] : string[]
+    [key: string]: string[];
 }
