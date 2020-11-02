@@ -19,7 +19,6 @@ describe('Unit testing', () => {
         if (respJson.message !== 'ok') {
             throw Error(`response not ok, message: ${respJson.message}`);
         }
-
         const profile = JSON.parse(respJson['data']);
         const requestDef: string = profile.r;
         const policyDef: string = profile.p;
@@ -37,7 +36,6 @@ describe('Unit testing', () => {
             '[matchers]',
             `${matchers}`,
         ].join('\n');
-        console.log(modelConfStr);
         expect(requestDef).toBe('sub, obj, act');
         expect(policyDef).toBe('sub, obj, act');
         expect(policyEff).toBe('some(where (p.eft == allow))');

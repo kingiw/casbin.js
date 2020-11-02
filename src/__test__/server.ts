@@ -35,7 +35,7 @@ class TestServer {
 
     public async start(): Promise<void> {
         this.enforcer = await casbin.newEnforcer('./src/__test__/examples/basic_model.conf', './src/__test__/examples/basic_policy.csv');
-        this.svrTool = CasbinServerTool(this.enforcer);
+        this.svrTool = new CasbinServerTool(this.enforcer);
         this.setRouter();
         this.listener = this.app.listen(this.port, () => console.log(`Express server is listening at http://localhost:${this.port}`));
     }

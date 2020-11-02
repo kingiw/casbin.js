@@ -15,11 +15,16 @@ export default class Authorizer {
 
     async setup(endpoint: string, user: string) {
         this._endpoint = endpoint;
+        console.log("herere");
+        // let profile = Cache.loadFromLocalStorage(user);
+        // if (profile === '') {
+        //     profile = await this.fetchProfile(user);
+        //     Cache.saveToLocalStorage(user, profile, 3600);
+        // }
         let profile = Cache.loadFromLocalStorage(user);
-        if (profile === '') {
-            profile = await this.fetchProfile(user);
-            Cache.saveToLocalStorage(user, profile, 3600);
-        }
+        profile = await this.fetchProfile(user);
+        console.log(`profile ${profile}`);
+        console.log("11111111");
         await this.initEnforcer(profile);
     }
 
@@ -27,11 +32,13 @@ export default class Authorizer {
         if (this._endpoint === undefined || this._endpoint === null) {
             throw Error('Endpoint not specified');
         }
+        console.log(333333333);
         const resp = await axios.get<BaseResponse>(`${this._endpoint}?casbin_subject=${user}`);
         return resp.data.data; // profile
     }
 
     public async initEnforcer(profile: string) {
+        console.log("22222222");
         const profileJson = JSON.parse(profile);
         const requestDef: string = profileJson.r;
         const policyDef: string = profileJson.p;
@@ -49,6 +56,7 @@ export default class Authorizer {
             '[matchers]',
             `${matchers}`,
         ].join('\n');
+        console.log("kingiw", modelConfStr);
         this._casbinModel = casbin.newModelFromString(modelConfStr);
         this._casbinEnforcer = await casbin.newEnforcer(this._casbinModel);
 

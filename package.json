@@ -22,7 +22,7 @@
     "@types/node-fetch": "^2.5.7",
     "@typescript-eslint/eslint-plugin": "^3.2.0",
     "@typescript-eslint/parser": "^3.2.0",
-    "casbinjs-server-tool": "^0.0.1",
+    "casbinjs-server-tool": "0.0.3",
     "clean-webpack-plugin": "^3.0.0",
     "eslint": "^7.7.0",
     "eslint-config-prettier": "^6.11.0",
